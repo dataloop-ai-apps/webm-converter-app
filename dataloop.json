@@ -5,12 +5,12 @@
   "attributes": {
     "Provider": "Dataloop"
   },
-  "version": "2.0.0",
+  "version": "2.0.1",
   "scope": "public",
   "codebase": {
     "type": "git",
     "gitUrl": "https://github.com/dataloop-ai-apps/webm-converter-app.git",
-    "gitTag": "2.0.0"
+    "gitTag": "2.0.1"
   },
   "components": {
     "modules": [
