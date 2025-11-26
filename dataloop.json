@@ -1,0 +1,115 @@
+{
+  "name": "app-webm-converter",
+  "displayName": "Custom WEBM Converter",
+  "description": "Custom WEBM Converter Application",
+  "attributes": {
+    "Provider": "Dataloop"
+  },
+  "version": "2.0.0",
+  "scope": "public",
+  "codebase": {
+    "type": "git",
+    "gitUrl": "https://github.com/dataloop-ai-apps/webm-converter-app.git",
+    "gitTag": "2.0.0"
+  },
+  "components": {
+    "modules": [
+      {
+        "name": "app-webm-module",
+        "entryPoint": "webm_converter.py",
+        "className": "WebmConverter",
+        "initInputs": [
+          {
+            "name": "method",
+            "type": "String"
+          }
+        ],
+        "functions": [
+          {
+            "name": "run",
+            "description": "Run Webm converter on input item, except method as param, possible values: ffmpeg, opencv. default to ffmpeg",
+            "input": [
+              {
+                "name": "item",
+                "type": "Item"
+              }
+            ],
+            "output": [
+                {
+                    "name": "item",
+                    "type": "Item"
+                }
+            ]
+          }
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "app-webm-converter",
+        "moduleName": "app-webm-module",
+        "initParams":{"method": "ffmpeg"},
+        "podType": "regular-s",
+        "runtime": {
+          "runnerImage": "gcr.io/viewo-g/piper/agent/cpu/webm:8",
+          "concurrency": 1,
+          "autoscaler": {
+            "type": "rabbitmq",
+            "minReplicas": 1,
+            "maxReplicas": 2,
+            "queueLength": 2
+          }
+        },
+        "executionTimeout": 7200
+      }
+    ],
+    "triggers": [
+      {
+        "name": "app-webm-converter",
+        "active": true,
+        "type": "Event",
+        "namespace": "services.app-webm-converter",
+        "spec": {
+          "filter": {
+            "$and": [
+                {
+                    "metadata.system.mimetype": {
+                        "$eq": "video*"
+                    }
+                },
+                {
+                    "metadata.system.mimetype": {
+                        "$ne": "video/webm"
+                    }
+                },
+                {
+                  "metadata.system.modalities.type": {
+                      "$ne": "replace"
+                  }
+              },
+              {
+                "metadata.system.disableWebmTrigger": {
+                    "$ne": true
+                }
+            },
+                {
+                    "hidden": false
+                },
+                {
+                    "type": "file"
+                }
+            ]
+        },
+          "executionMode": "Once",
+          "resource": "ItemStatus",
+          "actions": ["taskAssigned"],
+          "input": {},
+          "operation": {
+            "type": "function",
+            "functionName": "run"
+          }
+        }
+      }
+    ]
+  }
+}
