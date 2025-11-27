@@ -49,18 +49,20 @@
         "name": "app-webm-converter",
         "moduleName": "app-webm-module",
         "initParams":{"method": "ffmpeg"},
-        "podType": "regular-s",
+        "podType": "regular-m",
         "runtime": {
           "runnerImage": "gcr.io/viewo-g/piper/agent/cpu/webm:8",
           "concurrency": 1,
           "autoscaler": {
             "type": "rabbitmq",
-            "minReplicas": 1,
-            "maxReplicas": 2,
+            "minReplicas": 0,
+            "maxReplicas": 10,
             "queueLength": 2
-          }
+          },
+          "preemptible": false
+
         },
-        "executionTimeout": 7200
+        "executionTimeout": 3600
       }
     ],
     "triggers": [
