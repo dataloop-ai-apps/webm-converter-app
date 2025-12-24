@@ -25,10 +25,14 @@ class WebmConverter(dl.BaseServiceRunner):
 
     """
 
-    def __init__(self, method=None):
+    def __init__(self, method=None, remote_path=None):
         if not method:
             method = ConversionMethod.FFMPEG
         # self.mail_handler = MailHandler(service_name='custom-webm-converter')
+        if remote_path is None:
+            self.remote_path = '/.dataloop/webm'
+        else:
+            self.remote_path = remote_path
         self.method = method
         if method == ConversionMethod.OPENCV:
             cmd_build_file = ['chmod', '777', 'opencv4_converter']
@@ -153,8 +157,7 @@ class WebmConverter(dl.BaseServiceRunner):
 
         return
 
-    @staticmethod
-    def _upload_webm_item(item, webm_file_path):
+    def _upload_webm_item(self, item, webm_file_path):
         """
         Upload the webm file to the platform
 
@@ -167,7 +170,7 @@ class WebmConverter(dl.BaseServiceRunner):
         item_arr = pre.split('/')[:-1]
         item_folder = '/'.join(item_arr)
 
-        remote_path = '/.dataloop/webm{}'.format(item_folder)
+        remote_path = f'{self.remote_path}/{item_folder}'
         webm_item = dataset.items.upload(
             local_path=webm_file_path,
             remote_path=remote_path,
@@ -263,7 +266,45 @@ class WebmConverter(dl.BaseServiceRunner):
         if not success:
             video_utilities.update_item_errors(item=item, error_dicts=err_dict)
         return success, summary
+    
+    @staticmethod
+    def _verify_vme(item: dl.Item):
+        # if metadata in the item no need to extract it
+        if 'ffmpeg' not in item.metadata['system'] or 'nb_read_frames' not in item.metadata['system']['ffmpeg']:
+            filters = dl.Filters(resource=dl.FiltersResource.EXECUTION)
+            filters.add(field = 'input.item.item_id', values=item.id)
+            execution = dl.executions.list(filters=filters)[0]
+            execution : dl.Execution = execution
+            if execution.in_progress():
+                execution = execution.wait()
+            if execution.status == dl.ExecutionStatus.FAILED:
+                execution = execution.rerun()
+                execution = execution.wait()
+            if execution.status == dl.ExecutionStatus.SUCCESS:
+                item = dl.items.get(item_id=item.id)
+                if 'ffmpeg' not in item.metadata['system'] or 'nb_read_frames' not in item.metadata['system']['ffmpeg']:
+                    raise Exception("Failed to extract metadata from VME, Execution ID: {}".format(execution.id))
+            else:
+                raise Exception("Failed to extract metadata from VME, Execution ID: {}".format(execution.id))
+        orig_metadata = {
+            'ffmpeg': item.metadata['system']['ffmpeg'],
+            'start_time': item.metadata.get('startTime', 0),
+            'height': item.height,
+            'width': item.width,
+            'fps': item.metadata.get('system', {}).get('fps', None),
+            'nb_streams': item.metadata['system'].get('nb_streams', 1)
+        }
 
+        if item.metadata['system'].get('duration', None) is not None:
+            orig_metadata['duration'] = float(item.metadata['system']['duration'])
+
+        if item.metadata['system']['ffmpeg'].get('nb_read_frames', None) is not None:
+            orig_metadata['nb_read_frames'] = int(item.metadata['system']['ffmpeg']['nb_read_frames'])
+
+        if item.metadata['system']['ffmpeg'].get('nb_frames', None) is not None:
+            orig_metadata['nb_frames'] = int(item.metadata['system']['ffmpeg']['nb_frames'])
+        return orig_metadata
+        
     def webm_converter(self,
                        item: dl.Item,
                        workdir,
@@ -282,28 +323,7 @@ class WebmConverter(dl.BaseServiceRunner):
         orig_filepath = os.path.join(workdir, item.name)
         orig_filepath = item.download(local_path=orig_filepath)
 
-        # if metadata in the item no need to extract it
-        if 'ffmpeg' not in item.metadata['system'] or 'nb_read_frames' not in item.metadata['system']['ffmpeg']:
-            orig_metadata = video_utilities.metadata_extractor_from_ffmpeg(stream=orig_filepath, with_headers=False)
-        else:
-            orig_metadata = {
-                'ffmpeg': item.metadata['system']['ffmpeg'],
-                'start_time': item.metadata.get('startTime', 0),
-                'height': item.height,
-                'width': item.width,
-                'fps': item.metadata.get('fps', None),
-                'nb_streams': item.metadata['system'].get('nb_streams', 1)
-            }
-
-            if item.metadata['system'].get('duration', None) is not None:
-                orig_metadata['duration'] = float(item.metadata['system']['duration'])
-
-            if item.metadata['system']['ffmpeg'].get('nb_read_frames', None) is not None:
-                orig_metadata['nb_read_frames'] = int(item.metadata['system']['ffmpeg']['nb_read_frames'])
-
-            if item.metadata['system']['ffmpeg'].get('nb_frames', None) is not None:
-                orig_metadata['nb_frames'] = int(item.metadata['system']['ffmpeg']['nb_frames'])
-
+        orig_metadata = self._verify_vme(item=item)
         logger.info('{header} downloading item'.format(header=log_header))
 
         logger.info('{} converting with {}'.format(log_header, self.method))
