@@ -25,14 +25,10 @@ class WebmConverter(dl.BaseServiceRunner):
 
     """
 
-    def __init__(self, method=None, remote_path=None):
+    def __init__(self, method=None):
         if not method:
             method = ConversionMethod.FFMPEG
         # self.mail_handler = MailHandler(service_name='custom-webm-converter')
-        if remote_path is None:
-            self.remote_path = '/.dataloop/webm'
-        else:
-            self.remote_path = remote_path
         self.method = method
         if method == ConversionMethod.OPENCV:
             cmd_build_file = ['chmod', '777', 'opencv4_converter']
@@ -157,7 +153,8 @@ class WebmConverter(dl.BaseServiceRunner):
 
         return
 
-    def _upload_webm_item(self, item, webm_file_path):
+    @staticmethod
+    def _upload_webm_item(item, webm_file_path):
         """
         Upload the webm file to the platform
 
@@ -170,7 +167,7 @@ class WebmConverter(dl.BaseServiceRunner):
         item_arr = pre.split('/')[:-1]
         item_folder = '/'.join(item_arr)
 
-        remote_path = f'{self.remote_path}/{item_folder}'
+        remote_path = '/.dataloop/webm{}'.format(item_folder)
         webm_item = dataset.items.upload(
             local_path=webm_file_path,
             remote_path=remote_path,
