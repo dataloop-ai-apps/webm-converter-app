@@ -48,7 +48,7 @@
       {
         "name": "app-webm-converter",
         "moduleName": "app-webm-module",
-        "initParams":{"method": "ffmpeg", "remote_path": "/.dataloop/webm"},
+        "initParams":{"method": "ffmpeg"},
         "runtime": {
           "podType": "regular-m",
           "runnerImage": "gcr.io/viewo-g/piper/agent/cpu/webm:8",
