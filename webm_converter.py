@@ -6,9 +6,9 @@ import logging
 import shutil
 import time
 import os
-
 # from mail_handler import MailHandler
 import video_utilities
+from service_config_manager import ServiceConfigManager
 
 logger = logging.getLogger(__name__)
 NUM_RETRIES = 2
@@ -24,6 +24,12 @@ class WebmConverter(dl.BaseServiceRunner):
     Plugin runner class
 
     """
+    
+    # Default configuration values - used when no config file exists or keys are missing
+    DEFAULTS = {
+        "webm_upload_path": "/.dataloop/webm",
+        "conversion_method": "ffmpeg"
+    }
 
     def __init__(self, method=None):
         if not method:
@@ -42,6 +48,11 @@ class WebmConverter(dl.BaseServiceRunner):
             dl.client_api.add_environment(environment=dl.client_api.environment,
                                           alias=new_env,
                                           url=url)
+        
+        self.config_manager = ServiceConfigManager(
+            service_name="webm-converter",
+            defaults=self.DEFAULTS
+        )
 
     def convert_to_webm_opencv(self, item, dir_path, nb_streams):
         """
@@ -51,7 +62,7 @@ class WebmConverter(dl.BaseServiceRunner):
         :param str dir_path: the dir that have the input and output files
         :param int nb_streams: the number if streams of the file example (nb_streams=2 when the video have an audio)
         """
-        output_file_path = os.path.join(dir_path, '{}.webm'.format(item.id))
+        output_file_path = os.path.join(dir_path, f'{item.id}.webm')
         input_file_path = os.path.join(dir_path, item.name)
 
         # start extract the video
@@ -69,7 +80,7 @@ class WebmConverter(dl.BaseServiceRunner):
         if nb_streams == 2:
             have_audio = True
             # start extract the audio
-            webm_audio = os.path.join(dir_path, '{}.aac'.format(item.id))
+            webm_audio = os.path.join(dir_path, f'{item.id}.aac')
             try:
                 cmd = [
                     'ffmpeg',
@@ -154,12 +165,13 @@ class WebmConverter(dl.BaseServiceRunner):
         return
 
     @staticmethod
-    def _upload_webm_item(item, webm_file_path):
+    def _upload_webm_item(item, webm_file_path, webm_upload_path: str = "/.dataloop/webm"):
         """
         Upload the webm file to the platform
 
         :param dl.item item: the item object of the file
         :param str webm_file_path: the webm file (output file of the converter method)
+        :param str webm_upload_path: the base remote path for webm uploads (from config)
         :return: the uploaded item
         """
         dataset = dl.datasets.get(fetch=False, dataset_id=item.datasetId)
@@ -167,7 +179,7 @@ class WebmConverter(dl.BaseServiceRunner):
         item_arr = pre.split('/')[:-1]
         item_folder = '/'.join(item_arr)
 
-        remote_path = '/.dataloop/webm{}'.format(item_folder)
+        remote_path = f'{webm_upload_path}{item_folder}'
         webm_item = dataset.items.upload(
             local_path=webm_file_path,
             remote_path=remote_path,
@@ -185,8 +197,8 @@ class WebmConverter(dl.BaseServiceRunner):
         :param dl.item modality_item: the webm item
         :return: the uploaded item
         """
-        d = datetime.datetime.utcnow()
-        epoch = datetime.datetime(1970, 1, 1)
+        d = datetime.datetime.now(datetime.timezone.utc)
+        epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
         now = (d - epoch).total_seconds() * 1000
         item.modalities.create(
             modality_type='replace',
@@ -280,9 +292,9 @@ class WebmConverter(dl.BaseServiceRunner):
             if execution.status == dl.ExecutionStatus.SUCCESS:
                 item = dl.items.get(item_id=item.id)
                 if 'ffmpeg' not in item.metadata['system'] or 'nb_read_frames' not in item.metadata['system']['ffmpeg']:
-                    raise Exception("Failed to extract metadata from VME, Execution ID: {}".format(execution.id))
+                    raise Exception(f"Failed to extract metadata from VME, Execution ID: {execution.id}")
             else:
-                raise Exception("Failed to extract metadata from VME, Execution ID: {}".format(execution.id))
+                raise Exception(f"Failed to extract metadata from VME, Execution ID: {execution.id}")
         orig_metadata = {
             'ffmpeg': item.metadata['system']['ffmpeg'],
             'start_time': item.metadata.get('startTime', 0),
@@ -315,20 +327,27 @@ class WebmConverter(dl.BaseServiceRunner):
         :param progress: progress
         :return:
         """
-        log_header = '[preprocess][on_create][{item_id}][{func}]'.format(item_id=item.id, func='webm-converter')
-        webm_filepath = os.path.join(workdir, '{}.webm'.format(item.id))
+        # Get resolved config for this dataset
+        config = self.config_manager.get_config(
+            dataset_id=item.datasetId
+        )
+        convert_method = config.get('conversion_method', self.method)
+        logger.debug(f"Using config for dataset {item.datasetId}: {config}")
+        
+        log_header = f'[preprocess][on_create][{item.id}][webm-converter]'
+        webm_filepath = os.path.join(workdir, f'{item.id}.webm')
         orig_filepath = os.path.join(workdir, item.name)
         orig_filepath = item.download(local_path=orig_filepath)
 
         orig_metadata = self._verify_vme(item=item)
-        logger.info('{header} downloading item'.format(header=log_header))
+        logger.info(f'{log_header} downloading item')
 
-        logger.info('{} converting with {}'.format(log_header, self.method))
+        logger.info(f'{log_header} converting with {self.method}')
         valid_data, msg = video_utilities.validate_metadata(metadata=orig_metadata)
         if not valid_data:
             return valid_data, msg
         tic = time.time()
-        if self.method == ConversionMethod.FFMPEG:
+        if convert_method == ConversionMethod.FFMPEG:
             self.convert_to_webm_ffmpeg(
                 input_filepath=orig_filepath,
                 output_filepath=webm_filepath,
@@ -336,13 +355,13 @@ class WebmConverter(dl.BaseServiceRunner):
                 nb_frames=orig_metadata.get('nb_read_frames', None),
                 progress=progress
             )
-        elif self.method == ConversionMethod.OPENCV:
+        elif convert_method == ConversionMethod.OPENCV:
             self.convert_to_webm_opencv(
                 item=item,
                 dir_path=workdir,
                 nb_streams=orig_metadata.get('nb_streams', 1))
         else:
-            raise Exception(" unsupported converter method")
+            raise Exception("unsupported converter method: {self.method}")
 
         duration = time.time() - tic
         same, summary = self.verify_webm_conversion(
@@ -355,25 +374,19 @@ class WebmConverter(dl.BaseServiceRunner):
         validate, exp_frames, validate_msg = video_utilities.validate_video(fps=summary['webm_fps'],
                                                                             duration=summary['webm_duration'],
                                                                             r_frames=summary['webm_nb_read_frames'],
-                                                                            default_start_time=summary[
-                                                                                'webm_start_time'],
+                                                                            default_start_time=summary['webm_start_time'],
                                                                             prefix_check='web')
         if not validate:
             video_utilities.update_item_errors(item=item, error_dicts=validate_msg)
             video_utilities.send_error_event(item)
 
-        logger.info(
-            '{header} converted with {method}. conversion took: {dur}[s]'.format(
-                header=log_header,
-                method=self.method,
-                dur=duration
-            )
-        )
+        logger.info(f'{log_header} converted with {self.method}. conversion took: {duration}[s]')
 
         # upload web to platform
         webm_item = self._upload_webm_item(
             item=item,
-            webm_file_path=webm_filepath
+            webm_file_path=webm_filepath,
+            webm_upload_path=config.get("webm_upload_path", "/.dataloop/webm")
         )
 
         if not isinstance(webm_item, dl.Item):
@@ -416,7 +429,22 @@ class WebmConverter(dl.BaseServiceRunner):
             if 'Invalid data found when processing input' in str(e):
                 e = "Failed to convert to webm because the downloaded file is corrupted."
             # self.mail_handler.send_alert(item=item, msg=str(e))
-            raise ValueError('[webm-converter] failed\n error: {}'.format(e))
+            raise ValueError(f'[webm-converter] failed\n error: {e}')
         finally:
             if workdir is not None and os.path.isdir(workdir):
                 shutil.rmtree(workdir)
+
+    def on_delete(self, item: dl.Item):
+        """
+            Delete webm file if it exists
+        """
+        success = False
+        item_modalities = item.metadata.get('system', {}).get('modalities', [])
+        for modality in item_modalities:
+            if modality.get('name').endswith('.webm'):
+                webm_item = dl.items.get(item_id=modality.get('ref'))
+                if webm_item is not None:
+                    success = webm_item.delete()
+                    if not success:
+                        raise dl.exceptions.PlatformException('500', message=f"Failed to delete webm file, Item modalities: {item_modalities}")
+        return success
