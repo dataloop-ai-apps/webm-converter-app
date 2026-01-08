@@ -67,7 +67,7 @@ class ServiceConfigManager:
             return self._config_cache[dataset_id]
 
         # Load from binaries dataset
-        dataset = dl.datasets.get(dataset_id=dataset_id, fetch=False)
+        dataset = dl.datasets.get(dataset_id=dataset_id)
         project = dataset.project
         binaries_dataset = project.datasets._get_binaries_dataset()
 
