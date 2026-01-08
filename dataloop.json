@@ -35,11 +35,22 @@
               }
             ],
             "output": [
-                {
-                    "name": "item",
-                    "type": "Item"
-                }
+              {
+                "name": "item",
+                "type": "Item"
+              }
             ]
+          },
+          {
+            "name": "on_delete",
+            "description": "Delete webm file if it exists",
+            "input": [
+              {
+                "name": "item",
+                "type": "Item"
+              }
+            ],
+            "output": []
           }
         ]
       }
@@ -48,7 +59,7 @@
       {
         "name": "app-webm-converter",
         "moduleName": "app-webm-module",
-        "initParams":{"method": "ffmpeg"},
+        "initParams": { "method": "ffmpeg" },
         "runtime": {
           "podType": "regular-m",
           "runnerImage": "gcr.io/viewo-g/piper/agent/cpu/webm:8",
@@ -60,7 +71,6 @@
             "queueLength": 2
           },
           "preemptible": false
-
         },
         "executionTimeout": 3600
       }
@@ -74,34 +84,34 @@
         "spec": {
           "filter": {
             "$and": [
-                {
-                    "metadata.system.mimetype": {
-                        "$eq": "video*"
-                    }
-                },
-                {
-                    "metadata.system.mimetype": {
-                        "$ne": "video/webm"
-                    }
-                },
-                {
-                  "metadata.system.modalities.type": {
-                      "$ne": "replace"
-                  }
+              {
+                "metadata.system.mimetype": {
+                  "$eq": "video*"
+                }
+              },
+              {
+                "metadata.system.mimetype": {
+                  "$ne": "video/webm"
+                }
+              },
+              {
+                "metadata.system.modalities.type": {
+                  "$ne": "replace"
+                }
               },
               {
                 "metadata.system.disableWebmTrigger": {
-                    "$ne": true
+                  "$ne": true
                 }
-            },
-                {
-                    "hidden": false
-                },
-                {
-                    "type": "file"
-                }
+              },
+              {
+                "hidden": false
+              },
+              {
+                "type": "file"
+              }
             ]
-        },
+          },
           "executionMode": "Once",
           "resource": "ItemStatus",
           "actions": ["taskAssigned"],
@@ -109,6 +119,39 @@
           "operation": {
             "type": "function",
             "functionName": "run"
+          }
+        }
+      },
+      {
+        "name": "app-webm-converter-on-delete",
+        "active": true,
+        "type": "Event",
+        "namespace": "services.app-webm-converter",
+        "spec": {
+          "filter": {
+            "$and": [
+              {
+                "metadata.system.mimetype": {
+                  "$eq": "video*"
+                }
+              },
+              {
+                "metadata.system.mimetype": {
+                  "$ne": "video/webm"
+                }
+              },
+              { "metadata.system.modalities": { "$exists": true } },
+              { "hidden": false },
+              { "type": "file" }
+            ]
+          },
+          "executionMode": "Once",
+          "resource": "Item",
+          "actions": ["Deleted"],
+          "input": {},
+          "operation": {
+            "type": "function",
+            "functionName": "on_delete"
           }
         }
       }
