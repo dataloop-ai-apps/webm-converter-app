@@ -121,39 +121,6 @@
             "functionName": "run"
           }
         }
-      },
-      {
-        "name": "app-webm-converter-on-delete",
-        "active": true,
-        "type": "Event",
-        "namespace": "services.app-webm-converter",
-        "spec": {
-          "filter": {
-            "$and": [
-              {
-                "metadata.system.mimetype": {
-                  "$eq": "video*"
-                }
-              },
-              {
-                "metadata.system.mimetype": {
-                  "$ne": "video/webm"
-                }
-              },
-              { "metadata.system.modalities": { "$exists": true } },
-              { "hidden": false },
-              { "type": "file" }
-            ]
-          },
-          "executionMode": "Once",
-          "resource": "Item",
-          "actions": ["Deleted"],
-          "input": {},
-          "operation": {
-            "type": "function",
-            "functionName": "on_delete"
-          }
-        }
       }
     ]
   }
