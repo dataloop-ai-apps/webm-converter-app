@@ -99,6 +99,16 @@ def duration_str_to_sec(time_str):
         return None
 
 
+def _safe_eval_fraction(value):
+    """Safely parse a numeric string that may contain a division (e.g., '30000/1001')."""
+    value = str(value)
+    if '/' in value:
+        num, den = value.split('/', 1)
+        den = float(den)
+        return float(num) / den if den != 0 else 0.0
+    return float(value)
+
+
 def metadata_extractor_from_ffmpeg(stream, with_headers):
     """
     get the item metadata from ffmpeg
@@ -122,26 +132,26 @@ def metadata_extractor_from_ffmpeg(stream, with_headers):
         raise ValueError('missing video stream for: {}'.format(stream))
 
     start_time = video_stream.get('start_time', None)
-    start_time = eval(start_time) if start_time is not None else 0
+    start_time = float(start_time) if start_time is not None else 0
 
     height = video_stream.get('height', None)
     width = video_stream.get('width', None)
 
     fps = video_stream.get('avg_frame_rate', None)
-    fps = eval(fps) if fps is not None else None
+    fps = _safe_eval_fraction(fps) if fps is not None else None
 
     nb_frames = video_stream.get('nb_frames', None)
-    nb_frames = eval(nb_frames) if nb_frames is not None else None
+    nb_frames = int(nb_frames) if nb_frames is not None else None
 
     nb_read_frames = video_stream.get('nb_read_frames', None)
-    nb_read_frames = eval(nb_read_frames) if nb_read_frames is not None else None
+    nb_read_frames = int(nb_read_frames) if nb_read_frames is not None else None
 
     if 'duration' not in video_stream:
         tags = video_stream.get("tags", dict())
         duration = duration_str_to_sec(tags.get("DURATION", None))
     else:
         duration = video_stream.get('duration', None)
-        duration = eval(duration) if duration is not None else None
+        duration = float(duration) if duration is not None else None
 
     if duration is None:
         video_format = probe_result.get('format', dict())
