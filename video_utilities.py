@@ -99,14 +99,35 @@ def duration_str_to_sec(time_str):
         return None
 
 
-def _safe_eval_fraction(value):
-    """Safely parse a numeric string that may contain a division (e.g., '30000/1001')."""
-    value = str(value)
-    if '/' in value:
-        num, den = value.split('/', 1)
-        den = float(den)
-        return float(num) / den if den != 0 else 0.0
-    return float(value)
+def _safe_parse_ffmpeg_number(value):
+    """
+    Parse ffprobe numeric fields without eval: plain numbers, floats, or rationals (e.g. '30000/1001').
+    JSON numbers may already be int/float; stream fields are often strings.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+        s = str(value).strip()
+        if not s:
+            return None
+        if '/' in s:
+            num, den = s.split('/', 1)
+            d = float(den.strip())
+            return float(num.strip()) / d if d != 0 else 0.0
+        return float(s)
+    except (ValueError, TypeError):
+        logger.warning('Could not parse ffmpeg numeric field: {!r}'.format(value))
+        return None
+
+
+def _safe_parse_ffmpeg_int(value):
+    """Like _safe_parse_ffmpeg_number but truncated to int (frame counts)."""
+    n = _safe_parse_ffmpeg_number(value)
+    return int(n) if n is not None else None
 
 
 def metadata_extractor_from_ffmpeg(stream, with_headers):
@@ -132,30 +153,32 @@ def metadata_extractor_from_ffmpeg(stream, with_headers):
         raise ValueError('missing video stream for: {}'.format(stream))
 
     start_time = video_stream.get('start_time', None)
-    start_time = float(start_time) if start_time is not None else 0
+    _st = _safe_parse_ffmpeg_number(start_time)
+    start_time = 0.0 if _st is None else _st
 
     height = video_stream.get('height', None)
     width = video_stream.get('width', None)
 
     fps = video_stream.get('avg_frame_rate', None)
-    fps = _safe_eval_fraction(fps) if fps is not None else None
+    fps = _safe_parse_ffmpeg_number(fps) if fps is not None else None
 
     nb_frames = video_stream.get('nb_frames', None)
-    nb_frames = int(nb_frames) if nb_frames is not None else None
+    nb_frames = _safe_parse_ffmpeg_int(nb_frames) if nb_frames is not None else None
 
     nb_read_frames = video_stream.get('nb_read_frames', None)
-    nb_read_frames = int(nb_read_frames) if nb_read_frames is not None else None
+    nb_read_frames = _safe_parse_ffmpeg_int(nb_read_frames) if nb_read_frames is not None else None
 
     if 'duration' not in video_stream:
         tags = video_stream.get("tags", dict())
         duration = duration_str_to_sec(tags.get("DURATION", None))
     else:
         duration = video_stream.get('duration', None)
-        duration = float(duration) if duration is not None else None
 
     if duration is None:
         video_format = probe_result.get('format', dict())
         duration = video_format.get('duration', None)
+
+    duration = _safe_parse_ffmpeg_number(duration) if duration is not None else None
 
     res_dict = {
         'ffmpeg': video_stream,
@@ -163,7 +186,7 @@ def metadata_extractor_from_ffmpeg(stream, with_headers):
         'height': height,
         'width': width,
         'fps': fps,
-        'duration': float(duration) if duration is not None else None,
+        'duration': duration,
         'nb_read_frames': nb_read_frames,
         'nb_streams': nb_streams
     }
