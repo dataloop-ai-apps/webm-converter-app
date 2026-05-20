@@ -24,7 +24,7 @@ def execute_cmd(cmd, progress: dl.Progress = None, nb_frames=None):
     progress_conv = 10
     for _ in range(NUM_TRIES_COMMAND):
         if progress is not None and nb_frames is not None:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             while proc.poll() is None:
                 line = proc.stdout.readline()
                 if progress is not None:
