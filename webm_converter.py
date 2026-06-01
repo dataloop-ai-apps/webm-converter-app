@@ -5,6 +5,7 @@ import datetime
 import logging
 import shutil
 import time
+import cv2
 import os
 # from mail_handler import MailHandler
 import video_utilities
@@ -134,7 +135,6 @@ class WebmConverter(dl.BaseServiceRunner):
                                input_filepath,
                                output_filepath,
                                fps,
-                               nb_frames=None,
                                progress=None):
         """
         Convert and Save the item file in webm format by ffmpeg
@@ -145,6 +145,10 @@ class WebmConverter(dl.BaseServiceRunner):
         :param int nb_frames: the number of frames of the file
         :param dl.Progress progress: progress object to follow the work progress
         """
+        cap = cv2.VideoCapture(input_filepath)
+        n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        cap.release()
+        n_frames = max(int(n_frames), 0) if n_frames and n_frames > 0 else None
         cmds = [
             'ffmpeg',
             # To force the frame rate of the output file
@@ -160,7 +164,7 @@ class WebmConverter(dl.BaseServiceRunner):
             '-max_muxing_queue_size', '9999',
             output_filepath
         ]
-        video_utilities.execute_cmd(cmd=cmds, nb_frames=nb_frames, progress=progress)
+        video_utilities.execute_cmd(cmd=cmds, progress=progress, n_frames=n_frames)
 
         return
 
@@ -272,7 +276,7 @@ class WebmConverter(dl.BaseServiceRunner):
                                                        err_value=abs(orig_nb_read_frames - webm_nb_read_frames),
                                                        service_name='WebmConverter'))
             success = False
-        if not success:
+        if not success and item is not None:
             video_utilities.update_item_errors(item=item, error_dicts=err_dict)
         return success, summary
     
@@ -341,10 +345,10 @@ class WebmConverter(dl.BaseServiceRunner):
 
         orig_metadata = self._verify_vme(item=item)
         logger.info(f'{log_header} downloading item')
-
         logger.info(f'{log_header} converting with {self.method}')
         valid_data, msg = video_utilities.validate_metadata(metadata=orig_metadata)
         if not valid_data:
+            logger.warning(f"Failed validating metata: {msg}")
             return valid_data, msg
         tic = time.time()
         if convert_method == ConversionMethod.FFMPEG:
@@ -352,7 +356,6 @@ class WebmConverter(dl.BaseServiceRunner):
                 input_filepath=orig_filepath,
                 output_filepath=webm_filepath,
                 fps=orig_metadata['fps'],
-                nb_frames=orig_metadata.get('nb_read_frames', None),
                 progress=progress
             )
         elif convert_method == ConversionMethod.OPENCV:
@@ -361,7 +364,7 @@ class WebmConverter(dl.BaseServiceRunner):
                 dir_path=workdir,
                 nb_streams=orig_metadata.get('nb_streams', 1))
         else:
-            raise Exception("unsupported converter method: {self.method}")
+            raise Exception(f"unsupported converter method: {self.method}")
 
         duration = time.time() - tic
         same, summary = self.verify_webm_conversion(
@@ -390,6 +393,7 @@ class WebmConverter(dl.BaseServiceRunner):
         )
 
         if not isinstance(webm_item, dl.Item):
+            logger.error(f'Failed to upload webm. Uploaded item: {webm_item}')
             raise Exception('Failed to upload webm')
 
         # set modality on original
@@ -408,7 +412,8 @@ class WebmConverter(dl.BaseServiceRunner):
         success = False
         msg = ''
         try:
-            for _ in range(NUM_RETRIES):
+            for i_try in range(NUM_RETRIES):
+                logger.info(f'In run: try {i_try + 1}/{NUM_RETRIES}')
                 try:
                     workdir = item.id
                     os.makedirs(workdir, exist_ok=True)
@@ -419,6 +424,7 @@ class WebmConverter(dl.BaseServiceRunner):
                     else:
                         continue
                 except Exception:
+                    logger.error(f'failed in try: {i_try + 1}/{NUM_RETRIES}: {traceback.format_exc()}')
                     msg = traceback.format_exc()
                     continue
 

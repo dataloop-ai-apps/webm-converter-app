@@ -140,5 +140,6 @@ pip-selfcheck.json
 __pycache__
 .dataloop
 # End of https://www.toptal.com/developers/gitignore/api/pycharm,venv,git
-/tests/
+scripts
+tests
 deploy.py

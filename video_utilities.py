@@ -1,5 +1,7 @@
 import math
+import time
 from copy import deepcopy
+from threading import Thread
 
 import dtlpy as dl
 import subprocess
@@ -10,7 +12,7 @@ logger = logging.getLogger(__name__)
 NUM_TRIES_COMMAND = 1
 
 
-def execute_cmd(cmd, progress: dl.Progress = None, nb_frames=None):
+def execute_cmd(cmd, progress: dl.Progress = None, n_frames: int = None):
     """
     execute bash command
 
@@ -22,20 +24,48 @@ def execute_cmd(cmd, progress: dl.Progress = None, nb_frames=None):
     """
     exception = ''
     progress_conv = 10
-    for _ in range(NUM_TRIES_COMMAND):
-        if progress is not None and nb_frames is not None:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-            while proc.poll() is None:
-                line = proc.stdout.readline()
-                if progress is not None:
+    logger.info(f'executing cmd: {cmd}')
+    for i_try in range(NUM_TRIES_COMMAND):
+        logger.info(f'Trying {i_try}/{NUM_TRIES_COMMAND}')
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        stdout_lines = []
+        stderr_lines = []
+
+        # Read both stdout and stderr in separate threads to avoid pipe deadlocks
+
+        def _read_stream(stream, lines_list, prefix):
+            for line in stream:
+                lines_list.append(line)
+                logger.info(f"ffmpeg {prefix}: {line.rstrip()}")
+
+        stdout_thread = Thread(target=_read_stream, args=(proc.stdout, stdout_lines, 'stdout'))
+        stderr_thread = Thread(target=_read_stream, args=(proc.stderr, stderr_lines, 'stderr'))
+        stdout_thread.start()
+        stderr_thread.start()
+
+        # Track progress from stderr (ffmpeg writes progress/errors to stderr)
+        stderr_idx = 0
+        while proc.poll() is None:
+            if progress is not None and n_frames:
+                while stderr_idx < len(stderr_lines):
+                    line = stderr_lines[stderr_idx]
+                    stderr_idx += 1
                     if 'frame=' in line:
-                        frames = int(line.split('=')[1].split('f')[0].strip())
-                        if frames / nb_frames >= progress_conv / 100:
+                        try:
+                            frames = int(line.split('frame=')[1].split('f')[0].strip())
+                        except (ValueError, IndexError):
+                            continue
+                        if frames / n_frames >= progress_conv / 100:
+                            logging.info(f'Progress: {progress_conv}')
                             progress.update(progress=progress_conv)
                             progress_conv += 10
-        else:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        outs, errs = proc.communicate()
+            time.sleep(0.1)
+
+        # Wait for both reader threads to finish before collecting output
+        stdout_thread.join()
+        stderr_thread.join()
+        outs = ''.join(stdout_lines)
+        errs = ''.join(stderr_lines)
 
         if proc.returncode == 0:
             # if success return the result
@@ -144,7 +174,7 @@ def metadata_extractor_from_ffmpeg(stream, with_headers):
         with_headers=with_headers
     )
 
-    probe_result = json.loads(outs.decode('utf-8'))
+    probe_result = json.loads(outs)
     video_stream = next((stream for stream in probe_result['streams'] if stream['codec_type'] == 'video'), None)
 
     nb_streams = probe_result.get('format', {}).get('nb_streams', 1)
