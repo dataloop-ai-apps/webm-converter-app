@@ -282,41 +282,95 @@ class WebmConverter(dl.BaseServiceRunner):
     
     @staticmethod
     def _verify_vme(item: dl.Item):
+        log_header = f'[_verify_vme][{item.id}]'
+        system_metadata = item.metadata.get('system', {})
+        has_ffmpeg = 'ffmpeg' in system_metadata
+        has_nb_read_frames = has_ffmpeg and 'nb_read_frames' in system_metadata.get('ffmpeg', {})
+        logger.info(f'{log_header} Checking VME metadata: has_ffmpeg={has_ffmpeg}, has_nb_read_frames={has_nb_read_frames}')
+
         # if metadata in the item no need to extract it
-        if 'ffmpeg' not in item.metadata['system'] or 'nb_read_frames' not in item.metadata['system']['ffmpeg']:
+        if not has_ffmpeg or not has_nb_read_frames:
+            logger.warning(f'{log_header} Missing VME metadata on item, attempting to find VME execution. '
+                           f'system keys: {list(system_metadata.keys())}')
             filters = dl.Filters(resource=dl.FiltersResource.EXECUTION)
             filters.add(field = 'input.item.item_id', values=item.id)
-            execution = dl.executions.list(filters=filters)[0]
+            executions_page = dl.executions.list(filters=filters)
+            if executions_page.items_count == 0:
+                logger.error(f'{log_header} No VME executions found for item {item.id}')
+                raise Exception(f"No VME executions found for item {item.id}. "
+                                f"Ensure the Video Metadata Extractor service has processed this item.")
+            execution = executions_page.items[0]
             execution : dl.Execution = execution
+            logger.info(f'{log_header} Found VME execution {execution.id}, status={execution.latest_status.get("status", "unknown")}')
             if execution.in_progress():
+                logger.info(f'{log_header} VME execution {execution.id} is in progress, waiting...')
                 execution = execution.wait()
+                logger.info(f'{log_header} VME execution {execution.id} finished with status={execution.latest_status.get("status", "unknown")}')
             if execution.status == dl.ExecutionStatus.FAILED:
+                logger.warning(f'{log_header} VME execution {execution.id} failed, attempting rerun...')
                 execution = execution.rerun()
                 execution = execution.wait()
+                logger.info(f'{log_header} VME execution rerun {execution.id} finished with status={execution.latest_status.get("status", "unknown")}')
             if execution.status == dl.ExecutionStatus.SUCCESS:
                 item = dl.items.get(item_id=item.id)
-                if 'ffmpeg' not in item.metadata['system'] or 'nb_read_frames' not in item.metadata['system']['ffmpeg']:
+                system_metadata = item.metadata.get('system', {})
+                has_ffmpeg = 'ffmpeg' in system_metadata
+                has_nb_read_frames = has_ffmpeg and 'nb_read_frames' in system_metadata.get('ffmpeg', {})
+                logger.info(f'{log_header} Re-fetched item after VME execution. '
+                            f'has_ffmpeg={has_ffmpeg}, has_nb_read_frames={has_nb_read_frames}, '
+                            f'system keys: {list(system_metadata.keys())}')
+                if not has_ffmpeg or not has_nb_read_frames:
+                    ffmpeg_keys = list(system_metadata.get('ffmpeg', {}).keys()) if has_ffmpeg else []
+                    logger.error(f'{log_header} VME execution {execution.id} succeeded but metadata still missing. '
+                                 f'ffmpeg keys: {ffmpeg_keys}')
                     raise Exception(f"Failed to extract metadata from VME, Execution ID: {execution.id}")
             else:
-                raise Exception(f"Failed to extract metadata from VME, Execution ID: {execution.id}")
+                logger.error(f'{log_header} VME execution {execution.id} ended with unexpected status: {execution.latest_status}')
+                raise Exception(f"Failed to extract metadata from VME, Execution ID: {execution.id}, "
+                                f"status: {execution.latest_status}")
+
+        ffmpeg_metadata = system_metadata.get('ffmpeg', {})
+        start_time = system_metadata.get('startTime', 0)
+        fps = system_metadata.get('fps', None)
+        duration = system_metadata.get('duration', None)
+        nb_streams = system_metadata.get('nb_streams', 1)
+        nb_read_frames = ffmpeg_metadata.get('nb_read_frames', None)
+        nb_frames = ffmpeg_metadata.get('nb_frames', None)
+
         orig_metadata = {
-            'ffmpeg': item.metadata['system']['ffmpeg'],
-            'start_time': item.metadata.get('startTime', 0),
+            'ffmpeg': ffmpeg_metadata,
+            'start_time': start_time,
             'height': item.height,
             'width': item.width,
-            'fps': item.metadata.get('system', {}).get('fps', None),
-            'nb_streams': item.metadata['system'].get('nb_streams', 1)
+            'fps': fps,
+            'nb_streams': nb_streams
         }
 
-        if item.metadata['system'].get('duration', None) is not None:
-            orig_metadata['duration'] = float(item.metadata['system']['duration'])
+        if duration is not None:
+            orig_metadata['duration'] = float(duration)
+        else:
+            logger.warning(f'{log_header} duration is missing from system metadata')
 
-        if item.metadata['system']['ffmpeg'].get('nb_read_frames', None) is not None:
-            orig_metadata['nb_read_frames'] = int(item.metadata['system']['ffmpeg']['nb_read_frames'])
+        if nb_read_frames is not None:
+            orig_metadata['nb_read_frames'] = int(nb_read_frames)
+        else:
+            logger.warning(f'{log_header} nb_read_frames is missing from ffmpeg metadata')
 
-        if item.metadata['system']['ffmpeg'].get('nb_frames', None) is not None:
-            orig_metadata['nb_frames'] = int(item.metadata['system']['ffmpeg']['nb_frames'])
-        return orig_metadata
+        if nb_frames is not None:
+            orig_metadata['nb_frames'] = int(nb_frames)
+        else:
+            logger.warning(f'{log_header} nb_frames is missing from ffmpeg metadata')
+
+        if fps is None:
+            logger.warning(f'{log_header} fps is missing from system metadata')
+        if item.height is None or item.width is None:
+            logger.warning(f'{log_header} height/width missing: height={item.height}, width={item.width}')
+
+        logger.info(f'{log_header} Extracted orig_metadata: fps={fps}, duration={duration}, '
+                    f'nb_read_frames={nb_read_frames}, nb_frames={nb_frames}, '
+                    f'start_time={start_time}, nb_streams={nb_streams}, '
+                    f'height={item.height}, width={item.width}')
+        return orig_metadata, item
         
     def webm_converter(self,
                        item: dl.Item,
@@ -343,7 +397,7 @@ class WebmConverter(dl.BaseServiceRunner):
         orig_filepath = os.path.join(workdir, item.name)
         orig_filepath = item.download(local_path=orig_filepath)
 
-        orig_metadata = self._verify_vme(item=item)
+        orig_metadata, item = self._verify_vme(item=item)
         logger.info(f'{log_header} downloading item')
         logger.info(f'{log_header} converting with {self.method}')
         valid_data, msg = video_utilities.validate_metadata(metadata=orig_metadata)
@@ -454,3 +508,6 @@ class WebmConverter(dl.BaseServiceRunner):
                     if not success:
                         raise dl.exceptions.PlatformException('500', message=f"Failed to delete webm file, Item modalities: {item_modalities}")
         return success
+if __name__ == '__main__':
+    webm_converter = WebmConverter()
+    webm_converter.run(item=dl.items.get(item_id=''))
