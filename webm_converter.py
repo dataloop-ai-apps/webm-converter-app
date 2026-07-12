@@ -217,6 +217,37 @@ class WebmConverter(dl.BaseServiceRunner):
                                   system_update_values={'modalities': item.metadata['system'].get('modalities', [])},
                                   system_metadata=True)
 
+    @staticmethod
+    def _set_webm_metadata(webm_item: dl.Item, webm_ffprobe: dict):
+        """
+        Set video metadata on the uploaded webm item from ffprobe results.
+
+        :param dl.Item webm_item: the uploaded webm item
+        :param dict webm_ffprobe: ffprobe metadata dict from metadata_extractor_from_ffmpeg
+        """
+        if 'system' not in webm_item.metadata:
+            webm_item.metadata['system'] = {}
+
+        if webm_ffprobe.get('height') is not None:
+            webm_item.metadata['system']['height'] = webm_ffprobe['height']
+        if webm_ffprobe.get('width') is not None:
+            webm_item.metadata['system']['width'] = webm_ffprobe['width']
+        if webm_ffprobe.get('fps') is not None:
+            webm_item.metadata['system']['fps'] = webm_ffprobe['fps']
+        if webm_ffprobe.get('duration') is not None:
+            webm_item.metadata['system']['duration'] = webm_ffprobe['duration']
+        if webm_ffprobe.get('start_time') is not None:
+            webm_item.metadata['system']['startTime'] = webm_ffprobe['start_time']
+        if webm_ffprobe.get('nb_streams') is not None:
+            webm_item.metadata['system']['nb_streams'] = webm_ffprobe['nb_streams']
+        if webm_ffprobe.get('ffmpeg') is not None:
+            webm_item.metadata['system']['ffmpeg'] = webm_ffprobe['ffmpeg']
+
+        webm_item.update(system_metadata=True)
+        logger.info(f'[_set_webm_metadata][{webm_item.id}] Set video metadata on webm item: '
+                    f'fps={webm_ffprobe.get("fps")}, duration={webm_ffprobe.get("duration")}, '
+                    f'height={webm_ffprobe.get("height")}, width={webm_ffprobe.get("width")}')
+
     def verify_webm_conversion(self, webm_filepath: str, orig_metadata: dict, item=None):
         """
         Check and add validation to the webm output
@@ -278,7 +309,7 @@ class WebmConverter(dl.BaseServiceRunner):
             success = False
         if not success and item is not None:
             video_utilities.update_item_errors(item=item, error_dicts=err_dict)
-        return success, summary
+        return success, summary, webm_ffprobe
     
     @staticmethod
     def _verify_vme(item: dl.Item):
@@ -421,7 +452,7 @@ class WebmConverter(dl.BaseServiceRunner):
             raise Exception(f"unsupported converter method: {self.method}")
 
         duration = time.time() - tic
-        same, summary = self.verify_webm_conversion(
+        same, summary, webm_ffprobe = self.verify_webm_conversion(
             webm_filepath=webm_filepath,
             orig_metadata=orig_metadata,
             item=item
@@ -449,6 +480,9 @@ class WebmConverter(dl.BaseServiceRunner):
         if not isinstance(webm_item, dl.Item):
             logger.error(f'Failed to upload webm. Uploaded item: {webm_item}')
             raise Exception('Failed to upload webm')
+
+        # set video metadata on the uploaded webm item
+        self._set_webm_metadata(webm_item=webm_item, webm_ffprobe=webm_ffprobe)
 
         # set modality on original
         self._set_item_modality(
