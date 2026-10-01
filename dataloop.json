@@ -5,6 +5,12 @@
   "attributes": {
     "Provider": "Dataloop"
   },
+    "metadata":
+  {
+    "system": {
+      "systemCompute": true
+    }
+  },
   "version": "2.0.9",
   "scope": "public",
   "codebase": {
@@ -60,6 +66,7 @@
         "name": "app-webm-converter",
         "moduleName": "app-webm-module",
         "initParams": { "method": "ffmpeg" },
+        "type": "system",
         "runtime": {
           "podType": "regular-m",
           "runnerImage": "gcr.io/viewo-g/piper/agent/cpu/webm:8",
